@@ -49,60 +49,59 @@ func (s *syncCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...any) subcom
 		fmt.Printf("Error listing src snapshots: %v\n", err)
 		return subcommands.ExitFailure
 	}
-	if len(src) == 0 {
-		return subcommands.ExitSuccess
-	}
-	srcLatest := s.src + "@" + src[len(src)-1]
-
 	dst, err := snapshots(ctx, s.dst)
 	if err != nil {
 		fmt.Printf("Error listing dst snapshots: %v\n", err)
 		return subcommands.ExitFailure
 	}
-	var commonLatest string
+	commonLatest := -1
 	for i := len(dst) - 1; i >= 0; i-- {
-		if slices.Index(src, dst[i]) != -1 {
-			commonLatest = s.src + "@" + dst[i]
+		if j := slices.Index(src, dst[i]); j != -1 {
+			commonLatest = j
+			break
 		}
 	}
-	if commonLatest == srcLatest {
-		return subcommands.ExitSuccess
-	}
 
-	receiveCMD := exec.CommandContext(ctx, "sudo", "zfs", "receive", "-F", "-v", s.dst)
-	receiveCMD.Stdout = os.Stdout
-	receiveCMD.Stderr = os.Stderr
-	receiveStdin, err := receiveCMD.StdinPipe()
-	if err != nil {
-		fmt.Printf("Error creating stdinpipe for receiveCMD: %v\n", err)
-		return subcommands.ExitFailure
-	}
-
-	var sendCMD *exec.Cmd
-	if commonLatest == "" {
-		sendCMD = exec.CommandContext(ctx, "sudo", "zfs", "send", "-v", srcLatest)
-	} else {
-		sendCMD = exec.CommandContext(ctx, "sudo", "zfs", "send", "-v", "-i", commonLatest, srcLatest)
-	}
-	sendCMD.Stdout = receiveStdin
-	sendCMD.Stderr = os.Stderr
-	log.Printf("command: %s\n", sendCMD)
-	go func() {
-		defer receiveStdin.Close()
-		err := sendCMD.Run()
+	for i := commonLatest; i+1 < len(src); i++ {
+		receiveCMD := func() *exec.Cmd {
+			com := []string{"sudo", "zfs", "receive", "-F", "-v", s.dst}
+			return exec.CommandContext(ctx, com[0], com[1:]...)
+		}()
+		receiveCMD.Stdout = os.Stdout
+		receiveCMD.Stderr = os.Stderr
+		receiveStdin, err := receiveCMD.StdinPipe()
 		if err != nil {
-			log.Printf("sendCMD error: %v", err)
-		} else {
-			log.Println("sendCMD success")
+			fmt.Printf("Error creating stdinpipe for receiveCMD: %v\n", err)
+			return subcommands.ExitFailure
 		}
-	}()
 
-	log.Printf("command: %s\n", receiveCMD)
-	if err := receiveCMD.Run(); err != nil {
-		log.Printf("receiveCMD error: %v\n", err)
-		return subcommands.ExitFailure
-	} else {
-		log.Println("receiveCMD success")
+		sendCMD := func() *exec.Cmd {
+			com := []string{"sudo", "zfs", "send", "-v"}
+			if i >= 0 {
+				com = append(com, "-i", s.src+"@"+src[i])
+			}
+			com = append(com, s.src+"@"+src[i+1])
+			return exec.CommandContext(ctx, com[0], com[1:]...)
+		}()
+		sendCMD.Stdout = receiveStdin
+		sendCMD.Stderr = os.Stderr
+		log.Printf("command: %s\n", sendCMD)
+		go func() {
+			defer receiveStdin.Close()
+			if err := sendCMD.Run(); err != nil {
+				log.Printf("sendCMD error: %v", err)
+			} else {
+				log.Println("sendCMD success")
+			}
+		}()
+
+		log.Printf("command: %s\n", receiveCMD)
+		if err := receiveCMD.Run(); err != nil {
+			log.Printf("receiveCMD error: %v\n", err)
+			return subcommands.ExitFailure
+		} else {
+			log.Println("receiveCMD success")
+		}
 	}
 
 	return subcommands.ExitSuccess

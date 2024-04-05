@@ -37,6 +37,7 @@ func snapshots(ctx context.Context, dataset zfsDataset) ([]string, error) {
 	cmd := exec.CommandContext(ctx, com[0], com[1:]...)
 	cmd.Stdout = &buf
 	cmd.Stderr = os.Stderr
+	log.Printf("command: %s\n", cmd)
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("failed running zfs list command: %w", err)
 	}

@@ -2,10 +2,15 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/subcommands"
 )
 
 func createZpool(t *testing.T, tmpDir, dataset string) func() {
@@ -50,7 +55,9 @@ func TestSnapshot(t *testing.T) {
 		t.Fatalf("Unexpected number of snapshots: %d", len(before))
 	}
 
-	(&snapshotCmd{dataset: dataset}).Execute(ctx, nil)
+	if s := (&snapshotCmd{dataset: dataset}).Execute(ctx, nil); s != subcommands.ExitSuccess {
+		t.Fatalf("Unexpected status: %v", s)
+	}
 
 	after, err := snapshots(ctx, dataset)
 	if err != nil {
@@ -62,50 +69,63 @@ func TestSnapshot(t *testing.T) {
 }
 
 func TestSync(t *testing.T) {
-	tmpDir := t.TempDir()
-	src := zfsDataset{path: "test_src"}
-	dst := zfsDataset{path: "test_dst"}
-	defer createZpool(t, tmpDir, src.path)()
-	defer createZpool(t, tmpDir, dst.path)()
+	for numSnapshots := 0; numSnapshots <= 2; numSnapshots++ {
+		t.Run(fmt.Sprintf("%d_snapshot(s)", numSnapshots), func(t *testing.T) {
+			tmpDir := t.TempDir()
+			src := zfsDataset{path: "test_src"}
+			dst := zfsDataset{path: "test_dst"}
+			defer createZpool(t, tmpDir, src.path)()
+			defer createZpool(t, tmpDir, dst.path)()
 
-	ctx := context.Background()
+			ctx := context.Background()
 
-	srcBefore, err := snapshots(ctx, src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(srcBefore) != 0 {
-		t.Fatalf("Unexpected number of snapshots: %d", len(srcBefore))
-	}
+			srcBefore, err := snapshots(ctx, src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(srcBefore) != 0 {
+				t.Fatalf("Unexpected number of snapshots: %d", len(srcBefore))
+			}
 
-	dstBefore, err := snapshots(ctx, dst)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(dstBefore) != 0 {
-		t.Fatalf("Unexpected number of snapshots: %d", len(dstBefore))
-	}
+			dstBefore, err := snapshots(ctx, dst)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(dstBefore) != 0 {
+				t.Fatalf("Unexpected number of snapshots: %d", len(dstBefore))
+			}
 
-	(&snapshotCmd{dataset: src}).Execute(ctx, nil)
-	(&syncCmd{src: src, dst: dst}).Execute(ctx, nil)
+			for i := 0; i < numSnapshots; i++ {
+				if i > 0 {
+					time.Sleep(time.Second) // FIXME
+				}
+				if s := (&snapshotCmd{dataset: src}).Execute(ctx, nil); s != subcommands.ExitSuccess {
+					t.Fatalf("Unexpected status: %v", s)
+				}
+			}
+			if s := (&syncCmd{src: src, dst: dst}).Execute(ctx, nil); s != subcommands.ExitSuccess {
+				t.Fatalf("Unexpected status: %v", s)
+			}
 
-	srcAfter, err := snapshots(ctx, src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(srcAfter) != 1 {
-		t.Fatalf("Unexpected number of snapshots: %d", len(srcAfter))
-	}
+			srcAfter, err := snapshots(ctx, src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(srcAfter) != numSnapshots {
+				t.Fatalf("Unexpected number of snapshots: %d, want %d", len(srcAfter), numSnapshots)
+			}
 
-	dstAfter, err := snapshots(ctx, dst)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(dstAfter) != 1 {
-		t.Fatalf("Unexpected number of snapshots: %d", len(dstAfter))
-	}
+			dstAfter, err := snapshots(ctx, dst)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(dstAfter) != numSnapshots {
+				t.Fatalf("Unexpected number of snapshots: %d, want %d", len(dstAfter), numSnapshots)
+			}
 
-	if srcAfter[0] != dstAfter[0] {
-		t.Fatalf("Unexpected snapshot values: %s v.s. %s", srcAfter[0], dstAfter[0])
+			if diff := cmp.Diff(srcAfter, dstAfter); diff != "" {
+				t.Fatalf("Unexpected diff of snapshot values(-src,+dst):\n%s", diff)
+			}
+		})
 	}
 }

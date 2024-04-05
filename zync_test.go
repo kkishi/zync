@@ -38,8 +38,8 @@ func createZpool(t *testing.T, tmpDir, dataset string) func() {
 
 func TestSnapshot(t *testing.T) {
 	tmpDir := t.TempDir()
-	dataset := "test_src"
-	defer createZpool(t, tmpDir, dataset)()
+	dataset := zfsDataset{path: "test_src"}
+	defer createZpool(t, tmpDir, dataset.path)()
 
 	ctx := context.Background()
 	before, err := snapshots(ctx, dataset)
@@ -63,10 +63,10 @@ func TestSnapshot(t *testing.T) {
 
 func TestSync(t *testing.T) {
 	tmpDir := t.TempDir()
-	src := "test_src"
-	dst := "test_dst"
-	defer createZpool(t, tmpDir, src)()
-	defer createZpool(t, tmpDir, dst)()
+	src := zfsDataset{path: "test_src"}
+	dst := zfsDataset{path: "test_dst"}
+	defer createZpool(t, tmpDir, src.path)()
+	defer createZpool(t, tmpDir, dst.path)()
 
 	ctx := context.Background()
 

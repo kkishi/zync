@@ -15,7 +15,7 @@ import (
 )
 
 type syncCmd struct {
-	src, dst string
+	src, dst zfsDataset
 }
 
 func (*syncCmd) Name() string     { return "sync" }
@@ -24,13 +24,17 @@ func (*syncCmd) Usage() string {
 	return ""
 }
 func (s *syncCmd) SetFlags(f *flag.FlagSet) {
-	f.StringVar(&s.src, "src", "", "")
-	f.StringVar(&s.dst, "dst", "", "")
+	f.TextVar(&s.src, "src", &zfsDataset{}, "")
+	f.TextVar(&s.dst, "dst", &zfsDataset{}, "")
 }
 
-func snapshots(ctx context.Context, dataset string) ([]string, error) {
+func snapshots(ctx context.Context, dataset zfsDataset) ([]string, error) {
+	com := []string{"zfs", "list", "-t", "snapshot", dataset.path, "-o", "name", "-H"}
+	if dataset.host != "" {
+		com = []string{"ssh", dataset.host, strings.Join(com, " ")}
+	}
 	var buf bytes.Buffer
-	cmd := exec.CommandContext(ctx, "zfs", "list", "-t", "snapshot", dataset, "-o", "name", "-H")
+	cmd := exec.CommandContext(ctx, com[0], com[1:]...)
 	cmd.Stdout = &buf
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -38,7 +42,7 @@ func snapshots(ctx context.Context, dataset string) ([]string, error) {
 	}
 	var ss []string
 	for _, s := range strings.Fields(strings.TrimSpace(buf.String())) {
-		ss = append(ss, s[len(dataset)+1:])
+		ss = append(ss, s[len(dataset.path)+1:])
 	}
 	return ss, nil
 }
@@ -64,7 +68,10 @@ func (s *syncCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...any) subcom
 
 	for i := commonLatest; i+1 < len(src); i++ {
 		receiveCMD := func() *exec.Cmd {
-			com := []string{"sudo", "zfs", "receive", "-F", "-v", s.dst}
+			com := []string{"zfs", "receive", "-F", "-v", s.dst.path}
+			if s.dst.host != "" {
+				com = []string{"ssh", s.dst.host, strings.Join(com, " ")}
+			}
 			return exec.CommandContext(ctx, com[0], com[1:]...)
 		}()
 		receiveCMD.Stdout = os.Stdout
@@ -76,11 +83,11 @@ func (s *syncCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...any) subcom
 		}
 
 		sendCMD := func() *exec.Cmd {
-			com := []string{"sudo", "zfs", "send", "-v"}
+			com := []string{"zfs", "send", "-v"}
 			if i >= 0 {
-				com = append(com, "-i", s.src+"@"+src[i])
+				com = append(com, "-i", s.src.path+"@"+src[i])
 			}
-			com = append(com, s.src+"@"+src[i+1])
+			com = append(com, s.src.path+"@"+src[i+1])
 			return exec.CommandContext(ctx, com[0], com[1:]...)
 		}()
 		sendCMD.Stdout = receiveStdin

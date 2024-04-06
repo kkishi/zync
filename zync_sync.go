@@ -88,6 +88,9 @@ func (s *syncCmd) Execute(ctx context.Context, f *flag.FlagSet, _ ...any) subcom
 				com = append(com, "-i", s.src.path+"@"+src[i])
 			}
 			com = append(com, s.src.path+"@"+src[i+1])
+			if s.src.host != "" {
+				com = []string{"ssh", s.src.host, strings.Join(com, " ")}
+			}
 			return exec.CommandContext(ctx, com[0], com[1:]...)
 		}()
 		sendCMD.Stdout = receiveStdin
